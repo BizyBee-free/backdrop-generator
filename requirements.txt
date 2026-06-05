@@ -1,0 +1,1 @@
+fastapi==0.104.1\nuvicorn==0.24.0\nPillow==10.1.0\nopencv-python==4.8.1\nWeasyPrint==60.0\npydantic-settings==2.1.0\npython-multipart==0.0.6\npython-dotenv==1.0.0
