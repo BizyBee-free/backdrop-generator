@@ -1,0 +1,1 @@
+# 🎨 Backdrop Generator - 2K to 5000x10000\n\nConvert 2K images to 5000x10000px PDFs
