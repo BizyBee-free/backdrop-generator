@@ -1,0 +1,1 @@
+version: '3.8'\nservices:\n  backdrop:\n    build: .\n    ports:\n      - "8000:8000"\n    volumes:\n      - ./backend/uploads:/app/backend/uploads\n      - ./backend/outputs:/app/backend/outputs
