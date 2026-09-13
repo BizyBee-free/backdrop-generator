@@ -54,29 +54,18 @@ async function peekRun(env, token) {
 }
 
 async function rateLimit(env, ip) {
-  const key = `rl:${ip || "unknown"}`;
-  const now = Date.now();
-  const raw = await env.LEADERBOARD.get(key);
-  let hits = [];
-  if (raw) {
-    try {
-      hits = JSON.parse(raw).hits || [];
-    } catch {
-      hits = [];
-    }
+  const safeIp = String(ip || "unknown").replace(/[^a-zA-Z0-9.:_-]/g, "_");
+  const prefix = `rl:${safeIp}:`;
+  const listed = await env.LEADERBOARD.list({ prefix });
+  const keys = listed.keys || [];
+  if (keys.length >= RATE_LIMIT_MAX) {
+    return { ok: false, retryAfterSec: Math.ceil(RATE_LIMIT_WINDOW_MS / 1000) };
   }
-  hits = hits.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-  if (hits.length >= RATE_LIMIT_MAX) {
-    const retryAfterSec = Math.max(
-      1,
-      Math.ceil((hits[0] + RATE_LIMIT_WINDOW_MS - now) / 1000),
-    );
-    return { ok: false, retryAfterSec };
-  }
-  hits.push(now);
-  await env.LEADERBOARD.put(key, JSON.stringify({ hits }), {
-    expirationTtl: Math.ceil(RATE_LIMIT_WINDOW_MS / 1000),
-  });
+  await env.LEADERBOARD.put(
+    `${prefix}${Date.now()}-${randomOpaqueToken("h")}`,
+    "1",
+    { expirationTtl: Math.ceil(RATE_LIMIT_WINDOW_MS / 1000) },
+  );
   return { ok: true };
 }
 

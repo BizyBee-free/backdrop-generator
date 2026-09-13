@@ -185,28 +185,13 @@ export async function consumeRun(token) {
 
 export async function rateLimitIp(ip) {
   if (storageMode() !== "cf-kv") return { ok: true };
-  const key = `rl:${ip || "unknown"}`;
-  const now = Date.now();
-  let hits = [];
-  const raw = await kvGet(key);
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      hits = Array.isArray(parsed.hits) ? parsed.hits : [];
-    } catch {
-      hits = [];
-    }
+  const safeIp = String(ip || "unknown").replace(/[^a-zA-Z0-9.:_-]/g, "_");
+  const prefix = `rl:${safeIp}:`;
+  const keys = await kvList(prefix);
+  if (keys.length >= RATE_LIMIT_MAX) {
+    return { ok: false, retryAfterSec: Math.ceil(RATE_LIMIT_WINDOW_MS / 1000) };
   }
-  hits = hits.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-  if (hits.length >= RATE_LIMIT_MAX) {
-    const retryAfterSec = Math.max(
-      1,
-      Math.ceil((hits[0] + RATE_LIMIT_WINDOW_MS - now) / 1000),
-    );
-    return { ok: false, retryAfterSec };
-  }
-  hits.push(now);
-  await kvPut(key, JSON.stringify({ hits }), {
+  await kvPut(`${prefix}${Date.now()}-${randomOpaqueToken("h")}`, "1", {
     expirationTtl: Math.ceil(RATE_LIMIT_WINDOW_MS / 1000),
   });
   return { ok: true };

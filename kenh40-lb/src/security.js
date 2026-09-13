@@ -50,9 +50,11 @@ export function clientIp(reqLike) {
     return h[name] || h[name.toLowerCase()];
   };
   const xf = get("x-forwarded-for") || get("X-Forwarded-For");
-  if (typeof xf === "string" && xf.trim()) return xf.split(",")[0].trim();
-  const real = get("x-real-ip") || get("cf-connecting-ip");
-  if (typeof real === "string" && real.trim()) return real.trim();
+  const first = Array.isArray(xf) ? xf[0] : xf;
+  if (typeof first === "string" && first.trim()) return first.split(",")[0].trim();
+  const real = get("x-real-ip") || get("cf-connecting-ip") || get("x-vercel-forwarded-for");
+  const realFirst = Array.isArray(real) ? real[0] : real;
+  if (typeof realFirst === "string" && realFirst.trim()) return realFirst.split(",")[0].trim();
   return reqLike.socket?.remoteAddress || "unknown";
 }
 
