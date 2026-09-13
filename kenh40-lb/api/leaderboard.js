@@ -6,6 +6,7 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader("Cache-Control", "no-store");
 }
 
 export default async function handler(req, res) {
