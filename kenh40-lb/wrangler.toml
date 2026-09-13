@@ -1,0 +1,7 @@
+name = "kenh40-lb"
+main = "src/worker.js"
+compatibility_date = "2026-09-13"
+
+[[kv_namespaces]]
+binding = "LEADERBOARD"
+id = "REPLACE_AFTER_KV_CREATE"
