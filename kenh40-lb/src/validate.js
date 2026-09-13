@@ -10,6 +10,42 @@ export const CORRECT_MIN = 0;
 export const CORRECT_MAX = 15;
 export const MS_MIN = 3000;
 export const MS_MAX = 7_200_000;
+export const FAST_CORRECT_FLOOR = 3;
+export const MIN_MS_FLOOR = 8000;
+export const MIN_MS_PER_CORRECT = 2500;
+
+/** Extra minimum duration for correct >= 3: max(8000, correct * 2500). */
+export function minPlayMs(correct) {
+  if (!Number.isInteger(correct) || correct < FAST_CORRECT_FLOOR) return null;
+  return Math.max(MIN_MS_FLOOR, correct * MIN_MS_PER_CORRECT);
+}
+
+/**
+ * @param {number} correct
+ * @param {number} ms
+ * @param {string} [startedAt]
+ * @param {number} [now]
+ */
+export function validatePlayTiming(correct, ms, startedAt, now = Date.now()) {
+  const playMin = minPlayMs(correct);
+  if (playMin == null) return { ok: true };
+  if (ms < playMin) {
+    return {
+      ok: false,
+      error: `ms must be at least ${playMin} when correct>=3 (max(8000, correct*2500))`,
+    };
+  }
+  if (startedAt) {
+    const started = Date.parse(startedAt);
+    if (!Number.isNaN(started) && now - started < playMin) {
+      return {
+        ok: false,
+        error: `run too short for correct>=3 (need ${playMin}ms of wall time)`,
+      };
+    }
+  }
+  return { ok: true };
+}
 
 function isInt(value) {
   return typeof value === "number" && Number.isInteger(value);
@@ -53,6 +89,14 @@ export function validateEntry(body, opts = {}) {
 
   if (!isInt(ms) || ms < MS_MIN || ms > MS_MAX) {
     return { ok: false, error: "ms must be an integer in [3000, 7200000]" };
+  }
+
+  const playMin = minPlayMs(correct);
+  if (playMin != null && ms < playMin) {
+    return {
+      ok: false,
+      error: `ms must be at least ${playMin} when correct>=3 (max(8000, correct*2500))`,
+    };
   }
 
   let atValue;

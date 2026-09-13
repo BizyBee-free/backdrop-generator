@@ -2,8 +2,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   PRIZE_POINTS,
+  minPlayMs,
   sortAndTrim,
   validateEntry,
+  validatePlayTiming,
 } from "../src/validate.js";
 
 const now = () => new Date("2026-09-13T15:00:00.000Z");
@@ -41,7 +43,7 @@ describe("validateEntry", () => {
   });
 
   it("requires PRIZE_POINTS[correct-1] when correct > 0", () => {
-    const ok = validateEntry(valid({ correct: 15, score: 100000, ms: 4000 }), {
+    const ok = validateEntry(valid({ correct: 15, score: 100000, ms: 37500 }), {
       now,
       id,
     });
@@ -60,16 +62,46 @@ describe("validateEntry", () => {
   it("rejects out-of-range correct and ms", () => {
     assert.equal(validateEntry(valid({ correct: -1, score: 0 })).ok, false);
     assert.equal(validateEntry(valid({ correct: 16, score: 100000 })).ok, false);
-    assert.equal(validateEntry(valid({ ms: 2999 })).ok, false);
+    assert.equal(validateEntry(valid({ correct: 1, score: 200, ms: 2999 })).ok, false);
     assert.equal(validateEntry(valid({ ms: 7_200_001 })).ok, false);
-    assert.equal(validateEntry(valid({ ms: 3000 }), { now, id }).ok, true);
+    assert.equal(
+      validateEntry(valid({ correct: 1, score: 200, ms: 3000 }), { now, id }).ok,
+      true,
+    );
     assert.equal(validateEntry(valid({ ms: 7_200_000 }), { now, id }).ok, true);
+    assert.equal(validateEntry(valid({ correct: 3, score: 600, ms: 7999 })).ok, false);
+    assert.equal(
+      validateEntry(valid({ correct: 3, score: 600, ms: 8000 }), { now, id }).ok,
+      true,
+    );
+    assert.equal(
+      validateEntry(valid({ correct: 15, score: 100000, ms: 3000 })).ok,
+      false,
+    );
   });
 
   it("rejects non-integers", () => {
     assert.equal(validateEntry(valid({ correct: 1.5, score: 200 })).ok, false);
     assert.equal(validateEntry(valid({ score: 600.2 })).ok, false);
     assert.equal(validateEntry(valid({ ms: 3000.1 })).ok, false);
+  });
+});
+
+describe("minPlayMs / validatePlayTiming", () => {
+  it("uses max(8000, correct*2500) for correct>=3", () => {
+    assert.equal(minPlayMs(2), null);
+    assert.equal(minPlayMs(3), 8000);
+    assert.equal(minPlayMs(4), 10000);
+    assert.equal(minPlayMs(15), 37500);
+  });
+
+  it("rejects instant perfect wall-clock runs", () => {
+    const startedAt = "2026-09-13T15:00:00.000Z";
+    const now = Date.parse(startedAt) + 1000;
+    const tooFast = validatePlayTiming(15, 37500, startedAt, now);
+    assert.equal(tooFast.ok, false);
+    const ok = validatePlayTiming(15, 37500, startedAt, Date.parse(startedAt) + 37500);
+    assert.equal(ok.ok, true);
   });
 });
 

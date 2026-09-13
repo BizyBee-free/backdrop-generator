@@ -1,12 +1,11 @@
-import { sortAndTrim, validateEntry } from "../src/validate.js";
-import { loadRows, saveRows } from "../src/store.js";
+import { sortAndTrim, validateEntry, validatePlayTiming } from "../src/validate.js";
+import { consumeRun, loadRows, peekRun, rateLimitIp, saveRows } from "../src/store.js";
+import { CORS_HEADERS, clientIp, extractRunToken } from "../src/security.js";
 
 function setCors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Max-Age", "86400");
-  res.setHeader("Cache-Control", "no-store");
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    res.setHeader(k, v);
+  }
 }
 
 export default async function handler(req, res) {
@@ -23,24 +22,56 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (req.method === "POST") {
-    const body = req.body && typeof req.body === "object" ? req.body : null;
-    if (!body) {
-      res.status(400).json({ error: "invalid JSON" });
-      return;
-    }
-    const result = validateEntry(body);
-    if (!result.ok) {
-      res.status(400).json({ error: result.error });
-      return;
-    }
-    const rows = await loadRows();
-    rows.push(result.row);
-    const next = sortAndTrim(rows);
-    await saveRows(next);
-    res.status(201).json({ rows: next });
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "method not allowed" });
     return;
   }
 
-  res.status(405).json({ error: "method not allowed" });
+  const limited = await rateLimitIp(clientIp(req));
+  if (!limited.ok) {
+    res.setHeader("Retry-After", String(limited.retryAfterSec));
+    res.status(429).json({ error: "rate limited" });
+    return;
+  }
+
+  const body = req.body && typeof req.body === "object" ? req.body : null;
+  if (!body) {
+    res.status(400).json({ error: "invalid JSON" });
+    return;
+  }
+
+  const token = extractRunToken(req, body);
+  const peek = await peekRun(token);
+  if (!peek.ok) {
+    res.status(400).json({ error: peek.error });
+    return;
+  }
+
+  const result = validateEntry(body);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+
+  const timing = validatePlayTiming(
+    result.row.correct,
+    result.row.ms,
+    peek.startedAt,
+  );
+  if (!timing.ok) {
+    res.status(400).json({ error: timing.error });
+    return;
+  }
+
+  const consumed = await consumeRun(token);
+  if (!consumed.ok) {
+    res.status(400).json({ error: consumed.error });
+    return;
+  }
+
+  const rows = await loadRows();
+  rows.push(result.row);
+  const next = sortAndTrim(rows);
+  await saveRows(next);
+  res.status(201).json({ rows: next });
 }
