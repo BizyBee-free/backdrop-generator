@@ -6,9 +6,9 @@ Browser clients call this HTTPS API only. Admin reset and KV credentials stay on
 
 ## Live base URL
 
-**https://temporary-agile-argon-ou0k9uo.vercel.app**
+**https://temporary-turbo-sable-ih9bdkp.vercel.app**
 
-Anonymous Vercel + Cloudflare KV. **Claim within 60 minutes** (links in the PR) or the URL expires.
+Anonymous Vercel + Brewpage JSON store (HMAC run tokens). **Claim the Vercel URL within 60 minutes** (link in the PR) or it expires again.
 
 ## Client integration (start-token flow)
 
@@ -18,7 +18,7 @@ Anonymous Vercel + Cloudflare KV. **Claim within 60 minutes** (links in the PR) 
 4. Do **not** send `RESET_KEY` or any admin secret from the browser.
 
 ```js
-const BASE = "https://temporary-agile-argon-ou0k9uo.vercel.app";
+const BASE = "https://temporary-turbo-sable-ih9bdkp.vercel.app";
 
 const start = await fetch(`${BASE}/api/run/start`, { method: "POST" });
 const { runToken } = await start.json();
@@ -75,7 +75,7 @@ Responses send `Access-Control-Allow-Origin: *` so any web origin can call the A
 ## Example curl
 
 ```bash
-BASE=https://temporary-agile-argon-ou0k9uo.vercel.app
+BASE=https://temporary-turbo-sable-ih9bdkp.vercel.app
 
 # GET
 curl -sS "$BASE/api/leaderboard"
