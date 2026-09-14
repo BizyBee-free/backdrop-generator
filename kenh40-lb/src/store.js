@@ -3,6 +3,8 @@ import {
   RATE_LIMIT_WINDOW_MS,
   RUN_TTL_SEC,
   randomOpaqueToken,
+  signRunToken,
+  verifyRunToken,
 } from "./security.js";
 
 const ROWS_KEY = "rows";
@@ -117,9 +119,51 @@ async function saveGithub(rows, sha) {
   if (!res.ok) throw new Error(`GitHub write failed: ${res.status}`);
 }
 
+function brewpageConfigured() {
+  return Boolean(
+    env("BREWPAGE_OWNER_URL") && env("BREWPAGE_OWNER_TOKEN") && env("RUN_SECRET"),
+  );
+}
+
+async function getBrewDoc() {
+  const res = await fetch(env("BREWPAGE_OWNER_URL"), {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(`Brewpage read failed: ${res.status}`);
+  const data = await res.json();
+  const inner =
+    data && data.content && typeof data.content === "object" && !Array.isArray(data.content)
+      ? data.content
+      : data;
+  return {
+    rows: Array.isArray(inner?.rows) ? inner.rows : [],
+    consumed: Array.isArray(inner?.consumed) ? inner.consumed : [],
+    rl: inner?.rl && typeof inner.rl === "object" && !Array.isArray(inner.rl) ? inner.rl : {},
+  };
+}
+
+async function putBrewDoc(doc) {
+  const res = await fetch(env("BREWPAGE_OWNER_URL"), {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Owner-Token": env("BREWPAGE_OWNER_TOKEN"),
+    },
+    body: JSON.stringify({
+      rows: doc.rows,
+      consumed: (doc.consumed || []).slice(-400),
+      rl: doc.rl || {},
+    }),
+  });
+  if (!res.ok) throw new Error(`Brewpage write failed: ${res.status}`);
+}
+
 export function storageMode() {
   if (env("CF_API_TOKEN") && env("CF_ACCOUNT_ID") && env("CF_KV_NAMESPACE_ID")) {
     return "cf-kv";
+  }
+  if (brewpageConfigured()) {
+    return "brewpage";
   }
   if (env("GITHUB_TOKEN") && env("GITHUB_REPO")) {
     return "github";
@@ -130,6 +174,7 @@ export function storageMode() {
 export async function loadRows() {
   const mode = storageMode();
   if (mode === "cf-kv") return parseRows(await kvGet(ROWS_KEY));
+  if (mode === "brewpage") return (await getBrewDoc()).rows;
   if (mode === "github") return (await loadGithub()).rows;
   return [];
 }
@@ -137,6 +182,11 @@ export async function loadRows() {
 export async function saveRows(rows) {
   const mode = storageMode();
   if (mode === "cf-kv") return kvPut(ROWS_KEY, JSON.stringify(rows));
+  if (mode === "brewpage") {
+    const doc = await getBrewDoc();
+    doc.rows = rows;
+    return putBrewDoc(doc);
+  }
   if (mode === "github") {
     const current = await loadGithub();
     return saveGithub(rows, current.sha);
@@ -145,11 +195,18 @@ export async function saveRows(rows) {
 }
 
 export async function createRun() {
-  if (storageMode() !== "cf-kv") {
-    throw new Error("Run tokens require Cloudflare KV");
+  const mode = storageMode();
+  const startedAt = new Date().toISOString();
+  if (mode === "brewpage") {
+    const jti = randomOpaqueToken("j");
+    const exp = Date.now() + RUN_TTL_SEC * 1000;
+    const runToken = await signRunToken(env("RUN_SECRET"), { jti, startedAt, exp });
+    return { runToken, startedAt };
+  }
+  if (mode !== "cf-kv") {
+    throw new Error("Run tokens require Cloudflare KV or Brewpage store");
   }
   const runToken = randomOpaqueToken("r");
-  const startedAt = new Date().toISOString();
   await kvPut(
     `run:${runToken}`,
     JSON.stringify({ startedAt, consumed: false }),
@@ -160,6 +217,15 @@ export async function createRun() {
 
 export async function peekRun(token) {
   if (!token) return { ok: false, error: "run token required" };
+  if (storageMode() === "brewpage") {
+    const verified = await verifyRunToken(env("RUN_SECRET"), token);
+    if (!verified.ok) return verified;
+    const doc = await getBrewDoc();
+    if (doc.consumed.includes(verified.jti)) {
+      return { ok: false, error: "run token already used" };
+    }
+    return { ok: true, startedAt: verified.startedAt, jti: verified.jti };
+  }
   const raw = await kvGet(`run:${token}`);
   if (!raw) return { ok: false, error: "invalid or expired run token" };
   let data;
@@ -175,6 +241,15 @@ export async function peekRun(token) {
 export async function consumeRun(token) {
   const peek = await peekRun(token);
   if (!peek.ok) return peek;
+  if (storageMode() === "brewpage") {
+    const doc = await getBrewDoc();
+    if (doc.consumed.includes(peek.jti)) {
+      return { ok: false, error: "run token already used" };
+    }
+    doc.consumed.push(peek.jti);
+    await putBrewDoc(doc);
+    return peek;
+  }
   await kvPut(
     `run:${token}`,
     JSON.stringify({ startedAt: peek.startedAt, consumed: true }),
@@ -184,8 +259,23 @@ export async function consumeRun(token) {
 }
 
 export async function rateLimitIp(ip) {
-  if (storageMode() !== "cf-kv") return { ok: true };
+  const mode = storageMode();
   const safeIp = String(ip || "unknown").replace(/[^a-zA-Z0-9.:_-]/g, "_");
+  const now = Date.now();
+  if (mode === "brewpage") {
+    const doc = await getBrewDoc();
+    const hits = (Array.isArray(doc.rl[safeIp]) ? doc.rl[safeIp] : []).filter(
+      (t) => now - t < RATE_LIMIT_WINDOW_MS,
+    );
+    if (hits.length >= RATE_LIMIT_MAX) {
+      return { ok: false, retryAfterSec: Math.ceil(RATE_LIMIT_WINDOW_MS / 1000) };
+    }
+    hits.push(now);
+    doc.rl[safeIp] = hits;
+    await putBrewDoc(doc);
+    return { ok: true };
+  }
+  if (mode !== "cf-kv") return { ok: true };
   const prefix = `rl:${safeIp}:`;
   const keys = await kvList(prefix);
   if (keys.length >= RATE_LIMIT_MAX) {
@@ -198,6 +288,10 @@ export async function rateLimitIp(ip) {
 }
 
 export async function clearLeaderboard() {
+  if (storageMode() === "brewpage") {
+    await putBrewDoc({ rows: [], consumed: [], rl: {} });
+    return;
+  }
   await saveRows([]);
   if (storageMode() !== "cf-kv") return;
   try {

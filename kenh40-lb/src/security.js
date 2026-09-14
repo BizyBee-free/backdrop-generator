@@ -58,6 +58,70 @@ export function clientIp(reqLike) {
   return reqLike.socket?.remoteAddress || "unknown";
 }
 
+function bytesToB64url(bytes) {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function b64urlToBytes(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + pad;
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function hmacSha256B64url(secret, data) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+  return bytesToB64url(new Uint8Array(sig));
+}
+
+/** Signed run token: base64url(JSON({jti,startedAt,exp})).hmac */
+export async function signRunToken(secret, { jti, startedAt, exp }) {
+  const payload = bytesToB64url(
+    new TextEncoder().encode(JSON.stringify({ jti, startedAt, exp })),
+  );
+  const hmac = await hmacSha256B64url(secret, payload);
+  return `${payload}.${hmac}`;
+}
+
+export async function verifyRunToken(secret, token) {
+  if (!token || typeof token !== "string" || !token.includes(".")) {
+    return { ok: false, error: "invalid or expired run token" };
+  }
+  const idx = token.lastIndexOf(".");
+  const payload = token.slice(0, idx);
+  const hmac = token.slice(idx + 1);
+  if (!payload || !hmac) return { ok: false, error: "invalid or expired run token" };
+  const expected = await hmacSha256B64url(secret, payload);
+  if (!timingSafeEqual(hmac, expected)) {
+    return { ok: false, error: "invalid or expired run token" };
+  }
+  let data;
+  try {
+    data = JSON.parse(new TextDecoder().decode(b64urlToBytes(payload)));
+  } catch {
+    return { ok: false, error: "invalid or expired run token" };
+  }
+  if (!data?.jti || !data?.startedAt || !data?.exp) {
+    return { ok: false, error: "invalid or expired run token" };
+  }
+  if (Date.now() > Number(data.exp)) {
+    return { ok: false, error: "invalid or expired run token" };
+  }
+  return { ok: true, jti: data.jti, startedAt: data.startedAt, exp: data.exp };
+}
+
 export function timingSafeEqual(a, b) {
   const left = String(a ?? "");
   const right = String(b ?? "");
