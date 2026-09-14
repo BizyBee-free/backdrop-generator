@@ -1,0 +1,9 @@
+{
+  "name": "kenh40-lb",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/validate.test.js",
+    "deploy": "wrangler deploy"
+  }
+}
